@@ -1,0 +1,52 @@
+# ===== Python cache och byggfiler =====
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ===== Miljöfiler och inställningar =====
+.env
+*.env
+.env.*
+*.ini
+*.cfg
+*.local
+
+# ===== Loggar =====
+*.log
+
+# ===== OS & editor-filer =====
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.bak
+
+# ===== Virtuella miljöer =====
+venv/
+.venv/
+env/
+.env/
+
+# ===== IDE / verktyg =====
+.vscode/
+.idea/
+*.code-workspace
+
+# ===== Flask och tempfiler =====
+instance/
+*.db
+*.sqlite
+*.sqlite3
+uploads/
+tmp/
+temp/
+
+# ===== AWS credentials =====
+.aws/
+*.pem
+*.key
+
+# ===== Backup eller test =====
+test_*/
+backup_*/
