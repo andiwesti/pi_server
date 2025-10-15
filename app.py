@@ -5,6 +5,7 @@ import time
 import threading
 import logging
 import atexit
+from datetime import datetime
 from flask import Flask, jsonify, request, Response, stream_with_context
 from flask_cors import CORS
 
@@ -280,10 +281,12 @@ def camera_upload():
     # Take snapshot
     image_bytes = take_snapshot(quality=90)
     
-    # Generate S3 key
-    filename = f"{int(time.time())}.jpg"
+    # Generate S3 key with human-readable timestamp + short session ID
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    session_id = request.headers.get("X-Session-Id", str(uuid.uuid4())[:6])
+    filename = f"photo_{timestamp}_{session_id}.jpg"
     user_id = request.headers.get("X-User-Id", "anon")
-    key = f"users/{user_id}/{uuid.uuid4()}-{filename}"
+    key = f"users/{user_id}/{filename}"
     
     # Upload to S3
     s3 = boto3.client("s3", region_name="eu-north-1")
@@ -360,6 +363,19 @@ def test_led():
     except Exception as e:
         log.error(f"LED test failed: {e}")
         return jsonify({"status": "error", "message": f"LED test failed: {str(e)}"}), 500
+
+@app.route("/brightness", methods=["POST", "OPTIONS"])
+def brightness_control():
+    """Handle brightness control requests"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    data = request.get_json() or {}
+    brightness = data.get('brightness', 100)
+    
+    # For now, just return success since we don't have brightness control
+    # You could implement PWM brightness control here if needed
+    return jsonify({"status": "success", "brightness": brightness})
 
 # ====== Cleanup ======
 @atexit.register
