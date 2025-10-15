@@ -29,13 +29,21 @@ def encode_jpeg(arr, quality=85) -> bytes:
     im.save(buf, format="JPEG", quality=quality, optimize=True)
     return buf.getvalue()
 
-def mjpeg_generator(target_fps=8, quality=80, on_frame=lambda: None):
-    """Yieldar MJPEG-frames. on_frame() anropas för varje frame (t.ex. watchdog)."""
+def take_snapshot(quality=85) -> bytes:
+    """Take a single snapshot and return JPEG bytes."""
+    cam = get_camera()
+    arr = cam.capture_array()
+    arr = arr[..., ::-1].copy()  # BGR -> RGB
+    return encode_jpeg(arr, quality=quality)
+
+def mjpeg_generator(target_fps=8, quality=80, on_frame=lambda: None, should_continue=lambda: True):
+    """Yieldar MJPEG-frames. on_frame() anropas för varje frame (t.ex. watchdog).
+    should_continue() kontrollerar om generatorn ska fortsätta köra."""
     cam = get_camera()
     boundary = b"--frame"
     frame_interval = 1.0 / float(target_fps)
     next_time = time.time()
-    while True:
+    while should_continue():
         arr = cam.capture_array()
         arr = arr[..., ::-1].copy()  # BGR -> RGB
         jpg = encode_jpeg(arr, quality=quality)
