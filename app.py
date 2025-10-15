@@ -78,6 +78,26 @@ def _force_led_on():
     except Exception as e:
         log.error(f"Failed to turn on LED: {e}")
 
+def _flash_led_for_capture():
+    """Flash LED for capture, then restore to stream state if streaming"""
+    global _led_state
+    was_streaming = any(s.get("led_on", False) for s in _stream_sessions.values())
+    
+    # Flash off-on-off
+    led_off()
+    time.sleep(0.1)
+    led_on()
+    time.sleep(0.1)
+    led_off()
+    time.sleep(0.1)
+    
+    # Restore LED state based on streaming status
+    if was_streaming:
+        led_on()
+        _led_state = True
+    else:
+        _led_state = False
+
 def _cleanup_stale_sessions():
     """Clean up sessions that haven't yielded frames in 3 seconds"""
     current_time = time.time()
@@ -243,7 +263,7 @@ def camera_stream_state():
 def camera_snapshot():
     from camera import take_snapshot
     # Flash LED before taking snapshot
-    led_blink(duration=0.5)
+    _flash_led_for_capture()
     image_bytes = take_snapshot(quality=90)
     return Response(image_bytes, mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
 
@@ -255,7 +275,7 @@ def camera_upload():
     import uuid
     
     # Flash LED before taking snapshot
-    led_blink(duration=0.5)
+    _flash_led_for_capture()
     
     # Take snapshot
     image_bytes = take_snapshot(quality=90)
