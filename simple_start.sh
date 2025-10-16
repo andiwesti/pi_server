@@ -1,16 +1,16 @@
 #!/bin/bash
-# start_server.sh - Start the Flask server with proper cleanup
+# simple_start.sh - Simple server start with basic cleanup
 
 echo "🚀 Starting Flask Pi Server..."
 
 # Change to the correct directory
 cd /home/anders/pi_server
 
-# Run cleanup first
-echo "Running cleanup..."
-./cleanup.sh
+# Run simple cleanup
+echo "Running simple cleanup..."
+./simple_cleanup.sh
 
-# Wait a moment for cleanup to complete
+# Wait a moment
 sleep 2
 
 # Start the server

@@ -10,7 +10,7 @@ from flask import Flask, jsonify, request, Response, stream_with_context
 from flask_cors import CORS
 
 # Local modules
-from led import setup_led, cleanup_led, led_on, led_off, led_blink
+from led import setup_led, cleanup_led, led_on, led_off
 from camera import mjpeg_generator
 from storage import create_presigned_upload_url, create_presigned_view_url, list_s3_objects
 
@@ -22,8 +22,7 @@ CORS(app)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pi_server")
 
-# Initialize LED
-setup_led()
+# LED will be initialized in main() function
 
 # ===== Session tracking for camera streams =====
 _stream_sessions = {}
@@ -62,10 +61,8 @@ def _force_led_off():
     """Force LED off and update state"""
     global _led_state
     try:
-        log.info(f"Calling led_off(), current LED state: {_led_state}")
         led_off()
         _led_state = False
-        log.info(f"LED forced off successfully, new state: {_led_state}")
     except Exception as e:
         log.error(f"Failed to turn off LED: {e}")
 
@@ -75,7 +72,6 @@ def _force_led_on():
     try:
         led_on()
         _led_state = True
-        log.info("LED forced on")
     except Exception as e:
         log.error(f"Failed to turn on LED: {e}")
 
@@ -227,26 +223,20 @@ def camera_stream():
 @app.route("/camera/stream/stop", methods=["POST"])
 def stop_camera_stream():
     """Stop all active camera streams and turn off LED"""
-    log.info("Stop stream request received")
     with _stream_lock:
         stopped_count = 0
-        log.info(f"Current sessions before stop: {list(_stream_sessions.keys())}")
         
         # First, mark all sessions as inactive to stop camera generation
         for session_id in list(_stream_sessions.keys()):
             if _stream_sessions[session_id]["active"]:
                 _stream_sessions[session_id]["active"] = False
                 stopped_count += 1
-                log.info(f"Marked session {session_id} as inactive")
         
         # Clear all sessions immediately
         _stream_sessions.clear()
-        log.info("Cleared all sessions")
         
         # Force LED off regardless
-        log.info(f"About to force LED off, current LED state: {_led_state}")
         _force_led_off()
-        log.info(f"Stopped {stopped_count} sessions and forced LED off. Final LED state: {_led_state}")
     return jsonify({"status": "stopped", "sessions_stopped": stopped_count, "led_state": _led_state})
 
 @app.route("/camera/stream/state", methods=["GET"])
@@ -310,15 +300,7 @@ def camera_upload():
         "viewUrl": view_url
     })
 
-# ====== Debug & admin ======
-@app.route("/debug/sessions", methods=["GET"])
-def debug_sessions():
-    with _stream_lock:
-        return jsonify({
-            "active_sessions": len(_stream_sessions),
-            "sessions": _stream_sessions
-        })
-
+# ====== LED Control ======
 @app.route("/led", methods=["POST"])
 def control_led():
     """Manually control LED on/off"""
@@ -335,34 +317,10 @@ def control_led():
         log.error(f"Error controlling LED: {e}")
         return jsonify({"status": "error", "message": f"Failed to control LED: {str(e)}", "led_state": _led_state}), 500
 
-@app.route("/debug/cleanup", methods=["POST"])
-def debug_cleanup():
-    """Manually clean up all sessions"""
-    with _stream_lock:
-        session_count = len(_stream_sessions)
-        for session_id in list(_stream_sessions.keys()):
-            _stream_sessions[session_id]["active"] = False
-        _stream_sessions.clear()
-        _force_led_off()
-    return jsonify({"status": "cleaned up", "sessions_removed": session_count, "led_state": _led_state})
-
 @app.route("/led/status", methods=["GET"])
 def led_status():
     """Get current LED status"""
     return jsonify({"led_on": _led_state, "active_sessions": len(_stream_sessions)})
-
-@app.route("/led/test", methods=["POST"])
-def test_led():
-    """Test LED functionality - turn on for 2 seconds then off"""
-    try:
-        log.info("Testing LED functionality")
-        _force_led_on()
-        time.sleep(2)
-        _force_led_off()
-        return jsonify({"status": "success", "message": "LED test completed"})
-    except Exception as e:
-        log.error(f"LED test failed: {e}")
-        return jsonify({"status": "error", "message": f"LED test failed: {str(e)}"}), 500
 
 @app.route("/brightness", methods=["POST", "OPTIONS"])
 def brightness_control():
@@ -377,15 +335,13 @@ def brightness_control():
     # You could implement PWM brightness control here if needed
     return jsonify({"status": "success", "brightness": brightness})
 
-# ====== Cleanup ======
-@atexit.register
-def _cleanup():
-    """Clean up resources on exit."""
-    cleanup_led()
-
 # ====== Main ======
 def main():
     log.info("🚀 Starting Flask Pi Server...")
+    
+    # Initialize LED
+    setup_led()
+    
     app.run(host="0.0.0.0", port=5000, debug=True, threaded=True, use_reloader=False)
 
 if __name__ == "__main__":
