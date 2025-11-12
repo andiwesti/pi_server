@@ -5,9 +5,12 @@ import time
 import threading
 import logging
 import atexit
+import json
+import os
 from datetime import datetime
 from flask import Flask, jsonify, request, Response, stream_with_context
 from flask_cors import CORS
+import paho.mqtt.client as mqtt
 
 # Local modules
 from led import setup_led, cleanup_led, led_on, led_off
@@ -22,7 +25,70 @@ CORS(app)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pi_server")
 
+# Filter out health check requests from Werkzeug logger
+class HealthCheckFilter(logging.Filter):
+    def filter(self, record):
+        # Suppress logs for /health endpoint
+        return "/health" not in record.getMessage()
+
+# Apply filter to Werkzeug logger (Flask's request logger)
+werkzeug_logger = logging.getLogger("werkzeug")
+werkzeug_logger.addFilter(HealthCheckFilter())
+
 # LED will be initialized in main() function
+
+# ===== Device Management & MQTT Configuration =====
+DEVICES_FILE = "/home/anders/smarthome/devices.json"
+MQTT_BROKER = "localhost"
+MQTT_PORT = 1883
+TOPIC_CMD = "home/heatpump/cmd"
+
+# Initialize MQTT client
+mqtt_client = None
+
+def _init_mqtt():
+    """Initialize MQTT client connection"""
+    global mqtt_client
+    try:
+        mqtt_client = mqtt.Client(client_id="flask-backend")
+        mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+        mqtt_client.loop_start()
+        log.info(f"MQTT client connected to {MQTT_BROKER}:{MQTT_PORT}")
+    except Exception as e:
+        log.error(f"Failed to connect to MQTT broker: {e}")
+        mqtt_client = None
+
+def _cleanup_mqtt():
+    """Clean up MQTT client on shutdown"""
+    global mqtt_client
+    if mqtt_client:
+        try:
+            mqtt_client.loop_stop()
+            mqtt_client.disconnect()
+            log.info("MQTT client disconnected")
+        except Exception as e:
+            log.error(f"Error disconnecting MQTT client: {e}")
+
+def load_devices():
+    """Load device list from JSON file"""
+    if not os.path.exists(DEVICES_FILE):
+        return []
+    try:
+        with open(DEVICES_FILE, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        log.error(f"Error loading devices: {e}")
+        return []
+
+def save_devices(devices):
+    """Save device list to JSON file"""
+    try:
+        with open(DEVICES_FILE, "w") as f:
+            json.dump(devices, f, indent=2)
+        log.info(f"Saved {len(devices)} devices to {DEVICES_FILE}")
+    except Exception as e:
+        log.error(f"Error saving devices: {e}")
+        raise
 
 # ===== Session tracking for camera streams =====
 _stream_sessions = {}
@@ -252,11 +318,15 @@ def camera_stream_state():
 
 @app.route("/camera/snapshot", methods=["GET"])
 def camera_snapshot():
-    from camera import take_snapshot
-    # Flash LED before taking snapshot
-    _flash_led_for_capture()
-    image_bytes = take_snapshot(quality=90)
-    return Response(image_bytes, mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
+    try:
+        from camera import take_snapshot
+        # Flash LED before taking snapshot
+        _flash_led_for_capture()
+        image_bytes = take_snapshot(quality=90)
+        return Response(image_bytes, mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
+    except Exception as e:
+        log.error(f"Camera snapshot failed: {e}")
+        return jsonify({"error": "Camera not available", "message": str(e)}), 500
 
 @app.route("/camera/upload", methods=["POST"])
 def camera_upload():
@@ -335,12 +405,74 @@ def brightness_control():
     # You could implement PWM brightness control here if needed
     return jsonify({"status": "success", "brightness": brightness})
 
+# ====== Device Management ======
+@app.route("/api/devices", methods=["GET"])
+def get_devices():
+    """Get list of devices from JSON file"""
+    devices = load_devices()
+    return jsonify(devices)
+
+@app.route("/api/devices", methods=["POST"])
+def update_devices():
+    """
+    Update device list. Expects a list of devices:
+    [
+      {"name": "Anders", "ip": "192.168.68.53", "enabled": true},
+      ...
+    ]
+    """
+    try:
+        data = request.get_json(force=True)
+        if not isinstance(data, list):
+            return jsonify({"error": "Data must be a list"}), 400
+        
+        # Validate each device
+        for d in data:
+            if "name" not in d or "ip" not in d:
+                return jsonify({"error": "Each device must have 'name' and 'ip' fields"}), 400
+        
+        save_devices(data)
+        return jsonify({"status": "ok", "count": len(data)})
+    except Exception as e:
+        log.error(f"Error updating devices: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# ====== AC Control ======
+@app.route("/api/ac", methods=["POST"])
+def control_ac():
+    """
+    Control AC via MQTT. Body: { "action": "on" } or { "action": "off" }
+    """
+    try:
+        data = request.get_json(force=True)
+        action = data.get("action")
+        
+        if action not in ("on", "off"):
+            return jsonify({"error": "action must be 'on' or 'off'"}), 400
+        
+        if not mqtt_client:
+            return jsonify({"error": "MQTT client not connected"}), 503
+        
+        mqtt_client.publish(TOPIC_CMD, action)
+        log.info(f"Published AC command: {action} to topic {TOPIC_CMD}")
+        return jsonify({"status": "sent", "action": action})
+    except Exception as e:
+        log.error(f"Error controlling AC: {e}")
+        return jsonify({"error": str(e)}), 500
+
 # ====== Main ======
 def main():
     log.info("🚀 Starting Flask Pi Server...")
     
     # Initialize LED
     setup_led()
+    
+    # Initialize MQTT client
+    _init_mqtt()
+    
+    # Register cleanup handlers
+    atexit.register(_cleanup_mqtt)
+    atexit.register(cleanup_led)
     
     app.run(host="0.0.0.0", port=5000, debug=True, threaded=True, use_reloader=False)
 
